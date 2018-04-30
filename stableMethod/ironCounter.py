@@ -4,14 +4,14 @@ from sklearn.externals import joblib
 from sklearn.metrics.pairwise import cosine_similarity
 import scipy.spatial as sp
 from numpy.linalg import norm
-from .utils import  *
+from stableMethod.utils import *
+
 
 if __name__ == "__main__":
 
-    os.chdir("C:\\Users\\an\\Documents\\work\\铜片\\opencv快速入门\\chapter01 图像调整")
     # 先进行gamma变换处理
 
-    img = cv2.imread("./sample/sample1.jpg")
+    img = cv2.imread("./img/sample/01.jpg")
     # img = cv2.imread("copper.jpg")
     # 添加调整图像水平的代码
     dst = derectionCorrect(img)
