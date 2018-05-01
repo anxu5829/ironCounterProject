@@ -8,7 +8,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from scipy.signal import argrelmax, argrelmin
-
+from scipy.interpolate import UnivariateSpline
 
 IMAGE_NEED = 3
 
@@ -123,11 +123,11 @@ def searchEdge(ironSub, classifier, plot=False, bias=20):
     return edgeP
 
 
-def showResult(classifier,
+def showResult(classifier,img,imgC,plotNum,plotCounter,
                startRow=500, rowNum=100,
                d=4,
                argrelmaxOrder=10, numOfStopping=20, scale=1.3
-               , plot=True, plotRowNum=40, coords=False, useMax=True
+               , plot=True, plotRowNum=40, coords=False, useMax=True,record = True
                ):
     """
 
@@ -183,8 +183,8 @@ def showResult(classifier,
 
     '''
     plt.imshow(imgc)
-    plt.plot(-diff*500-300)
-
+    plt.plot(-diff)
+    plt.show()
     '''
     np.random.seed(10)
     diff = diff + np.random.random(diff.shape[0]) * 0.0001
@@ -198,7 +198,7 @@ def showResult(classifier,
 
     while (True):
         stopWhile += 1
-        xcoords = argrelmax(diff, order=argrelmaxOrder)[0]
+        xcoords = argrelmin(diff, order=argrelmaxOrder)[0]
         diffXcocrds = np.diff(xcoords)
         low = np.percentile(diffXcocrds, 15)
         high = np.percentile(diffXcocrds, 85)
@@ -223,6 +223,7 @@ def showResult(classifier,
 
         '''
         查看最原始的分割结果对应的图片：
+            counter = None
             fig = plt.figure(figsize=(20,3))
             plt.title("counter : " + str(counter))
             plt.imshow(imgC[startRow:(startRow + plotRowNum), countCol])
@@ -292,7 +293,7 @@ def showResult(classifier,
                 # plt.imshow(imgC[startRow:(startRow+plotRowNum),xcoords[loc]:xcoords[loc + 1],:])
         # 考虑是否进行最终结果的作图
         if plot:
-            global plotNum, plotCounter
+            # global plotNum, plotCounter
 
             fig = plt.figure(figsize=(20, 20))
 
@@ -317,7 +318,9 @@ def showResult(classifier,
                 plt.axvline(x=xc, color='r', linewidth=4)
             print(plotNum)
             plt.show()
-
+        if record:
+            tempResult = {"reference" : { "startRow":startRow , "xcoords":xcoords ,"xcoordsLen":xcoords.shape[0] } ,"counter":counter}
+            return tempResult
         return counter
 
 
@@ -355,3 +358,124 @@ def derectionCorrect(img):
     M = cv2.getRotationMatrix2D((cols / 2, rows / 2), thetaMean * 180 / 3.1415926 - 90, 1.1)
     dst = cv2.warpAffine(img, M, (cols, rows))
     return dst
+
+
+
+def getIntervalOfIron(cut,img_diff_abs,maxInterval = 100,bandWidth = 10):
+    getCoords = np.argwhere(img_diff_abs > cut).ravel()
+
+    '''
+    plt.plot(img_diff_abs)
+    plt.axhline(cut)
+    plt.plot(img_diff_abs > cut)
+    '''
+    start = 0
+    end = 0
+    startHis = 0
+    endHis = 0
+    for coords in range(getCoords.shape[0]-1):
+        if getCoords[coords+1] - getCoords[coords] > maxInterval:
+            # print(getCoords[coords+1],getCoords[coords])
+            start = coords
+            end = coords
+        else:
+            end = coords+1
+        if getCoords[end] - getCoords[start] >= getCoords[endHis] - getCoords[startHis]:
+            startHis = start +1
+            endHis = end
+    if img_diff_abs[(getCoords[startHis] - bandWidth): getCoords[startHis]].shape[0] != 0 and  img_diff_abs[getCoords[endHis] : (getCoords[endHis] + bandWidth ) ].shape[0] != 0 :
+        s = getCoords[startHis] + np.argmin(img_diff_abs[(getCoords[startHis] - bandWidth) : getCoords[startHis]]) - bandWidth
+        e = getCoords[endHis] + np.argmin(img_diff_abs[getCoords[endHis] : (getCoords[endHis] + bandWidth ) ])
+        return (s,e)
+    else:
+        return (getCoords[startHis],getCoords[endHis])
+
+
+
+def getSplitPoint(img_diff):
+    temp = np.arange(img_diff.shape[0])
+    spl = UnivariateSpline(temp, img_diff)
+    img_diff_abs = np.abs(spl(temp))
+
+
+    # 加入平滑处理
+
+    '''
+    plt.plot(temp,img_diff)
+    plt.plot(temp, spl(temp), 'g', lw=3)
+
+    '''
+
+
+    above_half_range = img_diff_abs[img_diff_abs > 0.3 * img_diff_abs.max()]
+    height = above_half_range[np.logical_and(above_half_range < np.percentile(above_half_range, 80),
+                                             above_half_range > np.percentile(above_half_range, 20))].mean()
+
+    '''
+    plt.plot(img_diff_abs)
+    plt.axhline(height)
+    '''
+
+    ironRegion = []
+    for alpha in np.linspace(1, 100, 10) / 1000:
+        a, b = getIntervalOfIron(alpha * height, img_diff_abs)
+        ironRegion.append(b - a)
+
+    ironRegion = np.array(ironRegion)
+    alpha = (np.linspace(1, 100, 10) / 1000)[np.argmin(np.diff(ironRegion)) + 1]
+    a, b = getIntervalOfIron(alpha * height, img_diff_abs)
+    return  a,b,alpha
+
+
+def getImageSplitPoint(img,precision = 5,ifPlot = False,sides=10):
+    row = img.shape[0]
+    cutPoint =(np.linspace(0,1,precision+2)*row).astype(int)[1:-1]
+    start = []
+    end = []
+    for cut in cutPoint:
+        img_diff = (np.diff(img[cut:(cut + 80), :].mean(0)))
+        a, b ,splitAlpha= getSplitPoint(img_diff)
+        '''
+        plt.plot(img_diff)
+        plt.axvline(a)
+        plt.axvline(b)
+        '''
+        start.append(a)
+        end.append(b)
+        if ifPlot:
+            plt.plot(img_diff)
+            plt.axvline(a,c = 'r')
+            plt.axvline(b, c = 'r')
+            plt.show()
+
+    return int(np.median(a))-sides,int(np.median(b))+sides
+
+def edgeCorrection(imgC):
+    searchEdge = (np.linspace(0,1,5)*imgC.shape[0]).astype(int)[1:-1]
+    rightList = []
+    leftList = []
+    for edgeSeaching in searchEdge:
+        temp = cv2.cvtColor(imgC, cv2.COLOR_RGB2HSV)[edgeSeaching, :, 0]
+        tempSplit  = 0.5*(temp.max()- temp.min()) + temp.min()
+        '''
+        plt.plot(temp)
+        plt.axhline(tempSplit)
+        '''
+        part1 = np.argwhere(temp< tempSplit).ravel()
+        part2 = np.argwhere(temp>tempSplit).ravel()
+        part = part1 if part1.shape[0] < part2.shape[0] else part2
+
+        # 找到右侧边缘
+        # 未来找边缘算法应当改进为分位数操作
+        try:
+            right = part[part > (temp.shape[0]/2)].min()
+        except:
+            right = temp.shape[0]
+        try:
+            left  = part[part < (temp.shape[0]/2)].max()
+        except:
+            left = 0
+        rightList.append(right)
+        leftList.append(left)
+    return max(int(np.median(leftList)) - 10,0),int( np.median(rightList)) + 10
+
